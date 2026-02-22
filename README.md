@@ -11,10 +11,17 @@
 
 Реализация выполнена на **PHP + Laravel**.
 
-## Как запустить тесты
+## Как запустить
 
 1. Склонируйте репозиторий:
 
 ```bash
-git clone <URL вашего репозитория>
-cd <название_проекта>
+git clone https://github.com/tesav/laravel-crypto-balance.git
+
+cd laravel-crypto-balance
+
+docker compose up -d
+
+docker compose exec app sh
+
+php artisan test

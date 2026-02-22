@@ -1,0 +1,113 @@
+<?php
+
+namespace Tests\Feature;
+
+use Tests\TestCase;
+use App\Models\User;
+use App\Models\Wallet;
+use App\Services\CryptoBalanceService;
+use App\Services\RiskAssessmentService;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use PHPUnit\Framework\Attributes\Test;
+
+class CryptoBalanceServiceTest extends TestCase
+{
+    use RefreshDatabase;
+
+    protected CryptoBalanceService $service;
+    protected Wallet $wallet;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $user = User::factory()->create();
+
+        $this->wallet = Wallet::factory()->create([
+            'user_id' => $user->id,
+            'balance' => 100_00000000, // 100 BTC
+            'reserved_balance' => 0,
+        ]);
+
+        $this->service = new CryptoBalanceService(new RiskAssessmentService());
+    }
+
+    #[Test]
+    public function deposit_increases_wallet_balance(): void
+    {
+        $transaction = $this->service->deposit(
+            $this->wallet,
+            50_00000000, // 50 BTC
+            'txhash123'
+        );
+
+        $this->wallet->refresh();
+        $this->assertEquals(150_00000000, $this->wallet->balance);
+        $this->assertEquals('confirmed', $transaction->status->value);
+    }
+
+    #[Test]
+    public function withdrawal_reserves_funds(): void
+    {
+        $transaction = $this->service->withdrawal(
+            $this->wallet,
+            30_00000000, // 30 BTC
+            'idempotency123'
+        );
+
+        $this->wallet->refresh();
+        $this->assertEquals(30_00000000, $this->wallet->reserved_balance);
+        $this->assertEquals(100_00000000, $this->wallet->balance);
+        $this->assertEquals('pending', $transaction->status->value);
+    }
+
+    #[Test]
+    public function confirm_withdrawal_deducts_reserved_and_balance(): void
+    {
+        $transaction = $this->service->withdrawal(
+            $this->wallet,
+            20_00000000,
+            'idempotency456'
+        );
+
+        $this->service->confirm($transaction, 'txhash456');
+
+        $this->wallet->refresh();
+        $transaction->refresh();
+
+        $this->assertEquals(80_00000000, $this->wallet->balance);
+        $this->assertEquals(0, $this->wallet->reserved_balance);
+        $this->assertEquals('confirmed', $transaction->status->value);
+    }
+
+    #[Test]
+    public function cancel_withdrawal_releases_reserved_funds(): void
+    {
+        $transaction = $this->service->withdrawal(
+            $this->wallet,
+            25_00000000,
+            'idempotency789'
+        );
+
+        $this->service->cancel($transaction);
+
+        $this->wallet->refresh();
+        $transaction->refresh();
+
+        $this->assertEquals(100_00000000, $this->wallet->balance);
+        $this->assertEquals(0, $this->wallet->reserved_balance);
+        $this->assertEquals('failed', $transaction->status->value);
+    }
+
+    #[Test]
+    public function cannot_withdraw_more_than_available_balance(): void
+    {
+        $this->expectException(\DomainException::class);
+
+        $this->service->withdrawal(
+            $this->wallet,
+            200_00000000,
+            'idempotency999'
+        );
+    }
+}
